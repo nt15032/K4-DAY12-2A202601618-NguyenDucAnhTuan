@@ -1,0 +1,105 @@
+name: CI
+
+# Chạy cả khi pull_request chứ không chỉ khi push: bắt lỗi TRƯỚC khi code vào
+# nhánh chính mới là phần giá trị nhất của CI.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test — chạy checkpoint trên máy sạch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Cài dependency
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Chạy test
+        # Máy CI không có file .env — đây chính là chỗ 12-Factor trả công:
+        # cùng một code, môi trường khác nhau chỉ khác biến môi trường.
+        env:
+          API_TOKEN: ci-dummy
+          REDIS_URL: "fake://"
+        # Loại test_cp5.py vì nó gọi vào bản deploy đang sống, và
+        # test_bonus_cicd.py vì nó kiểm tra badge của chính workflow này
+        # (chạy ở đây là tự tham chiếu vòng tròn).
+        run: |
+          pytest tests/ -v -m "not docker" \
+            --ignore=tests/test_cp5.py \
+            --ignore=tests/test_bonus_cicd.py
+
+  build:
+    name: Build — dựng image trên máy sạch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bước này bắt các lỗi kiểu "file đó chỉ có trên máy tôi" hoặc
+      # .dockerignore loại nhầm thứ image cần.
+      - name: Build Docker image
+        run: docker build -t day12-chat:ci .
+
+      - name: Kiểm tra image dưới 400MB
+        run: |
+          bytes=$(docker image inspect day12-chat:ci --format '{{.Size}}')
+          megabytes=$((bytes / 1024 / 1024))
+          echo "Kích thước image: ${megabytes}MB"
+          if [ "$megabytes" -ge 400 ]; then
+            echo "Image vượt ngưỡng 400MB"
+            exit 1
+          fi
+
+  deploy:
+    name: Deploy — chỉ chạy khi mọi thứ xanh
+    # needs: là thứ biến workflow thành một cổng chất lượng. Thiếu nó thì
+    # GitHub chạy deploy SONG SONG với test, và code hỏng vẫn lên production.
+    needs: [test, build]
+    # if: để mỗi lần ai đó mở pull request không kéo theo một lần deploy.
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy lên Railway
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "Chưa cấu hình secret RAILWAY_TOKEN."
+            echo "Service đang deploy tự động qua GitHub integration của Railway,"
+            echo "nên bỏ qua bước này và đi thẳng tới smoke test."
+            exit 0
+          fi
+          npm install -g @railway/cli
+          railway up --detach
+
+      # Deploy xong mà không kiểm tra thì ta chỉ biết "lệnh deploy chạy xong",
+      # không biết "service còn sống". Thử lại nhiều lần vì Railway cần thời
+      # gian đổi sang bản mới.
+      - name: Smoke test
+        env:
+          PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app' }}
+        run: |
+          echo "Gọi $PUBLIC_URL/healthz"
+          for lan in $(seq 1 10); do
+            if curl -fsS "$PUBLIC_URL/healthz"; then
+              echo ""
+              echo "Service sống sau lần thử thứ $lan"
+              exit 0
+            fi
+            echo "Lần $lan chưa được, chờ 15s..."
+            sleep 15
+          done
+          echo "Service không phản hồi sau 10 lần thử"
+          exit 1
