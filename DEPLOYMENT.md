@@ -70,60 +70,51 @@ done; echo
 
 ## Kết Quả Chạy Thật
 
-Trạng thái lúc ghi file này: bản deploy trên Railway **chưa lên được** — healthcheck
-thất bại 3 lần liên tiếp nên không có replica nào phục vụ, edge proxy của Railway
-trả 404 thay cho app:
+Chạy ngày 2026-08-10 với `URL=https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app`
 
 ```
-$ curl -i https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app/healthz
-HTTP/1.1 404 Not Found
-Server: railway-hikari
-x-railway-fallback: true
-
-{"status":"error","code":404,"message":"Application not found"}
-```
-
-Log build phía Railway:
-
-```
-====================
-Starting Healthcheck
-====================
-Path: /healthz
-Retry window: 30s
-
-Attempt #1 failed with service unavailable. Continuing to retry for 19s
-Attempt #2 failed with service unavailable. Continuing to retry for 8s
-1/1 replicas never became healthy!
-Healthcheck failed!
-```
-
-Cùng image đó chạy ở máy bằng `docker compose up -d` thì hoàn toàn bình thường —
-nên đây là lỗi cấu hình môi trường trên cloud, không phải lỗi code:
-
-```
-$ docker compose ps
-chat   running  Up 16 seconds (healthy)
-redis  running  Up 10 minutes (healthy)
-
-$ curl -s http://localhost:8000/healthz
+$ curl -i $URL/healthz
+HTTP/1.1 200 OK
 {"status":"ok","service":"day12-chat-service","version":"1.0.0"}
 
-$ curl -s http://localhost:8000/readyz
+$ curl -i $URL/readyz
+HTTP/1.1 200 OK
 {"status":"ready","redis":true}
 
-$ curl -i -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"message":"Hi"}'
+$ curl -i -X POST $URL/chat -H "Content-Type: application/json" -d '{"message":"Deploy la gi?"}'
 HTTP/1.1 401 Unauthorized
 www-authenticate: Bearer
+{"detail":"invalid or missing bearer token"}
 
-$ # 3 request liên tiếp cùng client — lịch sử nằm ở Redis nên turns_before tăng dần
-turns_before = 0 | usd_cost = 2.505e-05 | usage = {'prompt': 3, 'completion': 41}
-turns_before = 2 | usd_cost = 3.84e-05  | usage = {'prompt': 48, 'completion': 52}
-turns_before = 4 | usd_cost = 4.665e-05 | usage = {'prompt': 103, 'completion': 52}
+$ curl -X POST $URL/chat -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $API_TOKEN" -H "X-Client-Id: sv-test" \
+    -d '{"message":"Deploy la gi?"}'
+{"reply":"Ngắn gọn: Deploy la gi phụ thuộc vào ba yếu tố — cấu hình qua biến môi
+trường, health check để orchestrator biết trạng thái, và giới hạn tài nguyên.",
+ "client_id":"sv-test","turns_before":0,"usd_cost":2.265e-05,
+ "usage":{"prompt":3,"completion":37}}
 
-$ # 15 request liên tiếp với BUCKET_CAPACITY=10
+$ # 15 request liên tiếp, BUCKET_CAPACITY=10 → 10 lần đầu qua, 5 lần sau bị chặn
 200 200 200 200 200 200 200 200 200 200 429 429 429 429 429
+
+$ # 3 lượt cùng một client — lịch sử nằm ở Redis nên turns_before tăng dần
+turns_before = 0
+turns_before = 2
+turns_before = 4
 ```
+
+`pytest tests/test_cp5.py -v` → **9 passed, 4 skipped**.
+
+### Ba lỗi đã gặp khi deploy và cách sửa
+
+| # | Triệu chứng | Nguyên nhân | Cách sửa |
+|---|-------------|-------------|----------|
+| 1 | `1/1 replicas never became healthy` | đọc nhầm Build Logs, lỗi thật nằm ở Deploy Logs | mở đúng tab Deploy Logs |
+| 2 | `Invalid value for '--port': '${PORT:-8000}' is not a valid integer` | Railway chạy `startCommand` **không qua shell** nên cú pháp `${VAR:-default}` của bash tới thẳng uvicorn dạng chuỗi | bỏ `startCommand` khỏi `railway.toml`, để Railway dùng `CMD` của Dockerfile — vốn đã bọc trong `sh -c` |
+| 3 | `/readyz` trả 503 `{"redis": false}` | `REDIS_URL` đặt là `redis://localhost:6379/0`; trong container, `localhost` là chính container đó, không phải Redis | tạo Redis add-on và trỏ biến sang `${{Redis.REDIS_URL}}` |
+
+Không lỗi nào trong ba lỗi trên lộ ra khi chạy ở máy — cùng một image chạy hoàn
+toàn bình thường bằng `docker compose up -d`.
 
 ## Ảnh Chụp Màn Hình
 
