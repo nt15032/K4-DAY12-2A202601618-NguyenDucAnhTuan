@@ -71,18 +71,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy lên Railway
+      # Deploy Hook là một URL bí mật của Render: gọi vào là nó build và deploy.
+      # Muốn đây thành cổng chất lượng thật thì phải TẮT Auto-Deploy trong
+      # Settings của service, nếu không Render vẫn tự deploy ngay lúc push —
+      # song song với test chứ không phải sau khi test xanh.
+      - name: Deploy lên Render
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "Chưa cấu hình secret RAILWAY_TOKEN."
-            echo "Service đang deploy tự động qua GitHub integration của Railway,"
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Chưa cấu hình secret RENDER_DEPLOY_HOOK."
+            echo "Service đang deploy tự động qua GitHub integration của Render,"
             echo "nên bỏ qua bước này và đi thẳng tới smoke test."
             exit 0
           fi
-          npm install -g @railway/cli
-          railway up --detach
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK"
+          echo "Đã kích hoạt deploy, chờ Render build xong"
+          sleep 60
 
       # Deploy xong mà không kiểm tra thì ta chỉ biết "lệnh deploy chạy xong",
       # không biết "service còn sống". Thử lại nhiều lần vì Railway cần thời
