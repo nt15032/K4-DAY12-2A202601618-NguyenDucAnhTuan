@@ -10,9 +10,10 @@ builder = "dockerfile"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# ${PORT:-8000} chứ không phải $PORT trần: nếu platform chưa gán PORT thì
-# uvicorn nhận --port rỗng và chết ngay lúc khởi động.
-startCommand = "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"
+# Không khai báo startCommand: Railway chạy startCommand KHÔNG qua shell, nên
+# cú pháp ${PORT:-8000} sẽ tới thẳng uvicorn dưới dạng chuỗi literal và chết
+# ngay ("not a valid integer"). Để trống thì Railway dùng CMD của Dockerfile,
+# vốn đã bọc trong `sh -c` nên biến môi trường được expand đúng.
 healthcheckPath = "/healthz"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"
