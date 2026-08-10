@@ -40,8 +40,11 @@ USER appuser
 
 EXPOSE 8000
 
+# Phải đọc $PORT y như CMD bên dưới. Cắm cứng 8000 ở đây thì trên platform
+# nào gán cổng khác (Render dùng 10000), healthcheck gõ nhầm cổng, container
+# bị coi là unhealthy và bị restart liên tục dù app vẫn chạy tốt.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()" || exit 1
+    CMD python -c "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('PORT', '8000') + '/healthz').read()" || exit 1
 
 # 0.0.0.0 chứ không phải 127.0.0.1 — bind localhost thì ngoài container gọi
 # không vào. ${PORT:-8000} vì Railway/Render/Cloud Run tự gán cổng.
