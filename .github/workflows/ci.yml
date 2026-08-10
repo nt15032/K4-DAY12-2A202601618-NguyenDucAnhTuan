@@ -89,8 +89,10 @@ jobs:
       # gian đổi sang bản mới.
       - name: Smoke test
         env:
-          PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app' }}
+          PUBLIC_URL: ${{ vars.PUBLIC_URL || 'https://day12-chat-nsgq.onrender.com' }}
         run: |
+          # Free tier của Render ngủ khi không có traffic — request đầu có thể
+          # mất tới 50 giây để đánh thức, nên vòng lặp thử lại là bắt buộc.
           echo "Gọi $PUBLIC_URL/healthz"
           for lan in $(seq 1 10); do
             if curl -fsS "$PUBLIC_URL/healthz"; then

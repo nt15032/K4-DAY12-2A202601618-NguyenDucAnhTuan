@@ -403,16 +403,32 @@ CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
 `CMD` này gọi tường minh qua `sh -c`, nên biến được expand đúng — đó cũng chính
 là lý do nó luôn chạy ổn ở local. Sau khi sửa, `/healthz` trả 200 ngay.
 
-**Hai lỗi còn lại**, ghi lại cho đủ:
+**Các lỗi còn lại**, ghi lại cho đủ. Bản nộp cuối chạy trên **Render**, nên tôi
+gặp thêm hai lỗi nữa khi chuyển nền tảng:
 
-| Lỗi | Nguyên nhân | Cách sửa |
-|-----|-------------|----------|
-| `/readyz` trả 503 `{"redis": false}` | tôi đặt `REDIS_URL=redis://localhost:6379/0` trên cloud. Trong container, `localhost` là chính container đó chứ không phải Redis | tạo Redis add-on rồi trỏ biến sang `${{Redis.REDIS_URL}}` |
-| dùng nhầm một API key của Gemini làm `API_TOKEN` | tưởng `API_TOKEN` là key mua từ nhà cung cấp LLM | `API_TOKEN` là secret **do mình tự đặt** để bảo vệ `/chat`; lab dùng mock LLM offline nên không cần key của ai cả |
+| Nền tảng | Lỗi | Nguyên nhân | Cách sửa |
+|----------|-----|-------------|----------|
+| Railway | `/readyz` trả 503 `{"redis": false}` | tôi đặt `REDIS_URL=redis://localhost:6379/0` trên cloud. Trong container, `localhost` là chính container đó chứ không phải Redis | trỏ biến sang `${{Redis.REDIS_URL}}` |
+| — | dùng nhầm một API key của Gemini làm `API_TOKEN` | tưởng `API_TOKEN` là key mua từ nhà cung cấp LLM | `API_TOKEN` là secret **do mình tự đặt** để bảo vệ `/chat`; lab dùng mock LLM offline nên không cần key của ai cả |
+| Render | `/healthz` lúc trả 200 lúc trả 404 kèm `x-render-routing: no-server` — đo được 8/12 request thành công | `HEALTHCHECK` trong Dockerfile cắm cứng cổng 8000, còn `CMD` đọc `$PORT`. Render gán `PORT=10000` nên healthcheck gõ nhầm cổng | sửa `HEALTHCHECK` đọc `os.environ.get('PORT', '8000')`; đo lại được 12/12 |
+| Render | `day12-chat.onrender.com` trả `/healthz` 200 nhưng `/chat` từ chối token của tôi | subdomain là tài nguyên **toàn cục**; tên `day12-chat` đã bị học viên khác đăng ký trước, Render cấp cho tôi `day12-chat-nsgq` | lấy URL từ dashboard thay vì đoán |
 
-**Bài học chung của cả ba.** Không lỗi nào lộ ra khi chạy ở máy — cùng một
+Lỗi ở dòng thứ ba đáng nói nhất. Nó đã nằm trong Dockerfile của tôi từ CP2,
+nhưng Railway gán `PORT=8000` — trùng đúng con số tôi cắm cứng — nên nó ẩn hoàn
+toàn. Phải đổi sang một nền tảng gán cổng khác thì lỗi mới lộ. Tôi kiểm chứng
+bằng `docker run -e PORT=10000` ở máy: bản cũ container không bao giờ đạt trạng
+thái `healthy`, bản sửa thì đạt.
+
+Dòng thứ tư cho một bài học về xác minh: `/healthz` trả 200 **không chứng minh**
+đó là service của mình, vì mọi bài nộp đều chạy cùng một code nên trả cùng một
+JSON. Thứ phân biệt được là secret chỉ mình có — gọi `/chat` bằng `API_TOKEN`
+của mình, nhận 200 thì đúng là của mình, nhận 401 thì của người khác.
+
+**Bài học chung.** Không lỗi nào trong số này lộ ra khi chạy ở máy — cùng một
 image, cùng một `docker compose up -d`, mọi thứ xanh. Chúng chỉ xuất hiện khi
 môi trường thật khác đi: lệnh khởi động được gọi theo cách khác, `localhost`
-trỏ tới thứ khác, biến môi trường do người khác điền. Đó chính là lý do 12-Factor
-bắt tách config ra khỏi code, và cũng là lý do phải deploy thật ít nhất một lần
-thay vì tin rằng "chạy được ở máy tôi là xong".
+trỏ tới thứ khác, cổng do platform gán chứ không phải mình chọn, tên miền phải
+tranh với người khác. Đó chính là lý do 12-Factor bắt tách config ra khỏi code
+— và lý do phải deploy thật ít nhất một lần thay vì tin rằng "chạy được ở máy
+tôi là xong". Deploy lên hai nền tảng khác nhau còn dạy thêm một điều: thứ mình
+tưởng là "code đúng" có khi chỉ là "code trùng hợp hợp với một môi trường cụ thể".

@@ -17,8 +17,8 @@
 
 | Mục | Nội dung |
 |-----|----------|
-| Public URL | https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app |
-| Platform | Railway |
+| Public URL | https://day12-chat-nsgq.onrender.com |
+| Platform | Render (Blueprint đọc `render.yaml`) |
 | Ngày deploy | 2026-08-10 |
 
 ## Biến Môi Trường Đã Set Trên Cloud
@@ -27,9 +27,9 @@ Ghi tên biến và **nguồn giá trị**, không ghi giá trị:
 
 | Biến | Đã set | Ghi chú |
 |------|--------|---------|
-| `PORT` | ✅ | Railway tự gán, app đọc qua `${PORT:-8000}` |
-| `API_TOKEN` | ✅ | đặt trong dashboard Railway, không nằm trong repo |
-| `REDIS_URL` | ✅ | Redis add-on của Railway, tự sinh và tham chiếu sang service `chat` |
+| `PORT` | ✅ | Render tự gán (10000); app đọc qua `${PORT:-8000}` trong `CMD` |
+| `API_TOKEN` | ✅ | khai báo `sync: false` trong `render.yaml` → Render hỏi lúc tạo Blueprint, không nằm trong repo |
+| `REDIS_URL` | ✅ | `fromService` trỏ tới Key Value `day12-chat-redis`, Render tự nối |
 | `BUCKET_CAPACITY` | ✅ | 10 |
 | `REFILL_PER_MINUTE` | ✅ | 10 |
 | `DAILY_BUDGET_USD` | ✅ | 1.0 |
@@ -54,7 +54,7 @@ curl -i -X POST <URL>/chat \
 # 4. Có token — mong đợi 200 kèm câu trả lời
 curl -i -X POST <URL>/chat \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $API_TOKEN" \
+  -H "Authorization: Bearer $TOKEN" \
   -H "X-Client-Id: sv-test" \
   -d '{"message":"Deploy là gì?"}'
 
@@ -62,7 +62,7 @@ curl -i -X POST <URL>/chat \
 for i in $(seq 1 15); do
   curl -s -o /dev/null -w "%{http_code} " -X POST <URL>/chat \
     -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_TOKEN" \
+    -H "Authorization: Bearer $TOKEN" \
     -H "X-Client-Id: sv-test" \
     -d '{"message":"test"}'
 done; echo
@@ -70,7 +70,7 @@ done; echo
 
 ## Kết Quả Chạy Thật
 
-Chạy ngày 2026-08-10 với `URL=https://k4-day12-2a202601618-nguyenducanhtuan-production.up.railway.app`
+Chạy ngày 2026-08-10 với `URL=https://day12-chat-nsgq.onrender.com`
 
 ```
 $ curl -i $URL/healthz
@@ -87,34 +87,55 @@ www-authenticate: Bearer
 {"detail":"invalid or missing bearer token"}
 
 $ curl -X POST $URL/chat -H "Content-Type: application/json" \
-    -H "Authorization: Bearer $API_TOKEN" -H "X-Client-Id: sv-test" \
+    -H "Authorization: Bearer $TOKEN" -H "X-Client-Id: sv-test" \
     -d '{"message":"Deploy la gi?"}'
 {"reply":"Ngắn gọn: Deploy la gi phụ thuộc vào ba yếu tố — cấu hình qua biến môi
-trường, health check để orchestrator biết trạng thái, và giới hạn tài nguyên.",
- "client_id":"sv-test","turns_before":0,"usd_cost":2.265e-05,
- "usage":{"prompt":3,"completion":37}}
+trường, health check để orchestrator biết trạng thái, và giới hạn tài nguyên.
+(Mình đang nhớ 2 lượt trao đổi trước đó.)","client_id":"sv-test",
+ "turns_before":2,"usd_cost":3.465e-05,"usage":{"prompt":43,"completion":47}}
 
-$ # 15 request liên tiếp, BUCKET_CAPACITY=10 → 10 lần đầu qua, 5 lần sau bị chặn
-200 200 200 200 200 200 200 200 200 200 429 429 429 429 429
+$ # 15 request liên tiếp, BUCKET_CAPACITY=10
+200 200 200 200 200 200 200 200 200 200 429 429 429 200 429
 
-$ # 3 lượt cùng một client — lịch sử nằm ở Redis nên turns_before tăng dần
+$ # 3 lượt cùng một client — lịch sử nằm ở Key Value nên turns_before tăng dần
 turns_before = 0
 turns_before = 2
 turns_before = 4
 ```
 
+Chú ý cái `200` xen giữa các `429` ở lần thứ 14: đó **không phải lỗi** mà là token
+bucket đang nạp lại. Mỗi vòng gọi Render mất khoảng 1,5 giây nên 15 request kéo
+dài chừng 25 giây, đủ để xô nhỏ thêm vài token (`REFILL_PER_MINUTE=10` tương
+đương 1 token mỗi 6 giây). Đây chính là điểm khác giữa token bucket và cách
+"tối đa N request mỗi phút": xô hồi phục dần theo thời gian chứ không reset theo
+mốc.
+
 `pytest tests/test_cp5.py -v` → **9 passed, 4 skipped**.
 
-### Ba lỗi đã gặp khi deploy và cách sửa
+### Các lỗi đã gặp khi deploy và cách sửa
 
-| # | Triệu chứng | Nguyên nhân | Cách sửa |
-|---|-------------|-------------|----------|
-| 1 | `1/1 replicas never became healthy` | đọc nhầm Build Logs, lỗi thật nằm ở Deploy Logs | mở đúng tab Deploy Logs |
-| 2 | `Invalid value for '--port': '${PORT:-8000}' is not a valid integer` | Railway chạy `startCommand` **không qua shell** nên cú pháp `${VAR:-default}` của bash tới thẳng uvicorn dạng chuỗi | bỏ `startCommand` khỏi `railway.toml`, để Railway dùng `CMD` của Dockerfile — vốn đã bọc trong `sh -c` |
-| 3 | `/readyz` trả 503 `{"redis": false}` | `REDIS_URL` đặt là `redis://localhost:6379/0`; trong container, `localhost` là chính container đó, không phải Redis | tạo Redis add-on và trỏ biến sang `${{Redis.REDIS_URL}}` |
+Bài này được deploy thử trên cả hai nền tảng. Bảng dưới ghi lại toàn bộ lỗi thật.
 
-Không lỗi nào trong ba lỗi trên lộ ra khi chạy ở máy — cùng một image chạy hoàn
-toàn bình thường bằng `docker compose up -d`.
+| # | Nền tảng | Triệu chứng | Nguyên nhân | Cách sửa |
+|---|----------|-------------|-------------|----------|
+| 1 | Railway | `1/1 replicas never became healthy` | đọc nhầm Build Logs; lỗi thật nằm ở Deploy Logs | mở đúng tab Deploy Logs |
+| 2 | Railway | `Invalid value for '--port': '${PORT:-8000}' is not a valid integer` | Railway chạy `startCommand` **không qua shell** nên cú pháp `${VAR:-default}` của bash tới thẳng uvicorn dạng chuỗi | bỏ `startCommand` khỏi `railway.toml`, để dùng `CMD` của Dockerfile — vốn đã bọc trong `sh -c` |
+| 3 | Railway | `/readyz` trả 503 `{"redis": false}` | đặt `REDIS_URL=redis://localhost:6379/0`; trong container, `localhost` là chính container đó | trỏ biến sang `${{Redis.REDIS_URL}}` |
+| 4 | Render | `/healthz` lúc 200 lúc 404 kèm `x-render-routing: no-server` (8/12 thành công) | `HEALTHCHECK` trong Dockerfile cắm cứng cổng 8000 trong khi `CMD` đọc `$PORT`, mà Render gán `PORT=10000` | sửa `HEALTHCHECK` đọc `os.environ.get('PORT', '8000')`; sau đó đo lại được 12/12 |
+| 5 | Render | `day12-chat.onrender.com` trả `/healthz` 200 nhưng `/chat` từ chối token | subdomain là tài nguyên **toàn cục**, tên `day12-chat` đã bị học viên khác chiếm; Render cấp cho mình `day12-chat-nsgq` | lấy URL từ dashboard thay vì đoán, và xác minh chủ sở hữu bằng token riêng |
+
+Lỗi số 4 đáng chú ý nhất: nó nằm trong code từ CP2 nhưng Railway không làm lộ ra,
+vì Railway gán `PORT=8000` — trùng đúng con số bị cắm cứng. Đổi nền tảng mới thấy.
+
+Lỗi số 5 cho một bài học riêng: `/healthz` trả 200 **không chứng minh** đó là
+service của mình. Thứ chứng minh được là secret chỉ mình có.
+
+### Hạn chế của free tier Render
+
+Render tự tắt instance khi không có traffic khoảng 15 phút; request kế tiếp mất
+tới 50 giây để đánh thức. `test_cp5.py` vẫn qua vì `test_healthz_tra_ve_200` có
+timeout 60 giây và chạy đầu tiên — nó đánh thức service cho các test sau. Nhưng
+nếu mở URL bằng trình duyệt sau một lúc không dùng thì lần tải đầu sẽ rất chậm.
 
 ## Ảnh Chụp Màn Hình
 
