@@ -137,6 +137,36 @@ tới 50 giây để đánh thức. `test_cp5.py` vẫn qua vì `test_healthz_tr
 timeout 60 giây và chạy đầu tiên — nó đánh thức service cho các test sau. Nhưng
 nếu mở URL bằng trình duyệt sau một lúc không dùng thì lần tải đầu sẽ rất chậm.
 
+## Luồng CI/CD
+
+Deploy không còn làm bằng tay. Mỗi lần push lên `main`:
+
+```
+git push
+   ↓
+GitHub Actions ── job test  (pytest trên máy sạch) ──┐
+               └─ job build (docker build + kiểm tra <400MB) ──┤
+                                                               │ cả hai xanh
+                                                               ▼
+                                            job deploy: gọi Render Deploy Hook
+                                                               ▼
+                                                  Render build và deploy
+                                                               ▼
+                                     smoke test: curl /healthz, thử lại tối đa 10 lần
+```
+
+Hai thứ khiến đây là một cổng chất lượng chứ không chỉ là tự động hoá:
+
+- `needs: [test, build]` — job deploy không khởi động nếu test hoặc build đỏ
+- **Auto-Deploy của service Render đã tắt** — nếu để bật, Render sẽ tự bắt commit
+  và deploy ngay lúc push, song song với test, nên code hỏng vẫn lên được
+  production trong khi Actions còn đang đỏ. Tắt nó thì đường deploy duy nhất đi
+  qua Deploy Hook, và hook chỉ được gọi sau khi mọi thứ xanh.
+
+Deploy Hook nằm trong GitHub Secrets với tên `RENDER_DEPLOY_HOOK`, không nằm
+trong repo. Khi được gọi, Render trả về id của deployment vừa tạo — đó là cách
+xác nhận hook thật sự chạy chứ không chỉ trả 200 suông.
+
 ## Ảnh Chụp Màn Hình
 
 Đặt ảnh trong thư mục `screenshots/`:
